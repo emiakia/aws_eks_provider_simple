@@ -17,7 +17,7 @@ data "aws_subnets" "subnets" {
 
 # IAM Role for EKS Cluster
 resource "aws_iam_role" "eks_cluster_role" {
-  name = "eksClusterRole"
+  name        = "eksClusterRole"
   description = "Amazon EKS - Cluster role"
 
   assume_role_policy = jsonencode({
@@ -37,12 +37,12 @@ resource "aws_iam_role" "eks_cluster_role" {
 # Attach policies to the EKS Cluster Role
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role     = aws_iam_role.eks_cluster_role.name
+  role       = aws_iam_role.eks_cluster_role.name
 }
 
 resource "aws_iam_role_policy_attachment" "eks_vpc_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role     = aws_iam_role.eks_cluster_role.name
+  role       = aws_iam_role.eks_cluster_role.name
 }
 
 # IAM Role for Node Group
@@ -69,20 +69,20 @@ resource "aws_iam_role_policy_attachment" "node_group_policies" {
     "AmazonEKS_CNI_Policy",
     "AmazonEKSWorkerNodePolicy"
   ])
-  
+
   policy_arn = "arn:aws:iam::aws:policy/${each.value}"
-  role     = aws_iam_role.eks_node_group_role.name
+  role       = aws_iam_role.eks_node_group_role.name
 }
 
 # EKS Cluster
 resource "aws_eks_cluster" "terraform_eks" {
   name     = "terraformEKS"
-  role_arn  = aws_iam_role.eks_cluster_role.arn
-  version   = "1.30"
-  
+  role_arn = aws_iam_role.eks_cluster_role.arn
+  version  = "1.30"
+
   vpc_config {
-    subnet_ids = data.aws_subnets.subnets.ids
-    security_group_ids = [aws_security_group.default.id]
+    subnet_ids             = data.aws_subnets.subnets.ids
+    security_group_ids     = [aws_security_group.default.id]
     endpoint_public_access = true
   }
 
@@ -123,13 +123,13 @@ resource "aws_security_group" "default" {
 
 # EKS Add-ons
 resource "aws_eks_addon" "coredns" {
-  cluster_name = aws_eks_cluster.terraform_eks.name
-  addon_name   = "coredns"
+  cluster_name  = aws_eks_cluster.terraform_eks.name
+  addon_name    = "coredns"
   addon_version = "v1.11.1-eksbuild.8"
 }
 
 resource "aws_eks_addon" "kube_proxy" {
-  cluster_name = aws_eks_cluster.terraform_eks.name
-  addon_name   = "kube-proxy"
+  cluster_name  = aws_eks_cluster.terraform_eks.name
+  addon_name    = "kube-proxy"
   addon_version = "v1.30.0-eksbuild.3"
 }
