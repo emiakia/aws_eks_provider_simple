@@ -1,65 +1,63 @@
-# ECS Cluster with Fargate and EC2 Instances
+# Terraform EKS Cluster Configuration
 
-## Overview
+This Terraform configuration sets up an Amazon EKS (Elastic Kubernetes Service) cluster with the following specifications:
 
-This Terraform configuration sets up an Amazon ECS (Elastic Container Service) environment with both Fargate and EC2 launch types. It includes:
+- **Cluster Name:** `terraformEKS`
+- **Kubernetes Version:** 1.30
+- **Node Group Name:** `terraformEKSNodeGroup`
+- **Node Instance Type:** `t2.micro`
+- **Disk Size:** 10GB
+- **AMI Type:** Amazon Linux 2 (AL2_x86_64)
+- **Scaling Configuration:** Desired size 2, minimum size 2, maximum size 2
+- **Add-ons:** CoreDNS, kube-proxy
 
-- **ECS Cluster**: Named `MyECSCluster`.
-- **Auto Scaling Group**: Manages EC2 instances with a maximum of 3 instances, on-demand provisioning.
-- **EC2 Instances**: Uses Amazon Linux 2 (kernel 5.10) with `t2.micro` instance type.
-- **Task Definition**: Configured for both Fargate and EC2 launch types.
-- **Service**: Uses AWS Fargate with a specified deployment configuration.
-- **Application Load Balancer (ALB)**: Distributes traffic to ECS services with health checks.
+## Features
 
-## Components
+- **IAM Roles:** Creates necessary IAM roles and attaches appropriate policies for the EKS cluster and node group.
+- **EKS Cluster:** Configures an EKS cluster with public endpoint access and associated VPC and subnets.
+- **Node Group:** Defines a node group with on-demand EC2 instances, using a specified AMI and scaling configuration.
+- **Security Group:** Uses the default security group for the EKS nodes.
+- **Add-ons:** Configures CoreDNS and kube-proxy add-ons compatible with Kubernetes 1.30.
 
-1. **ECS Cluster**
-   - Creates an ECS Cluster named `MyECSCluster`.
-   - Supports both Fargate and EC2 launch types.
 
-2. **Auto Scaling Group**
-   - Configures an Auto Scaling Group with:
-     - Desired capacity: 0
-     - Minimum capacity: 0
-     - Maximum capacity: 3
-   - Uses an Amazon Linux 2 AMI with `t2.micro` instances.
-   - Configures the ECS agent on EC2 instances to join the `MyECSCluster`.
+### VPC and Subnets
 
-3. **EC2 Launch Configuration**
-   - Uses Amazon Linux 2 (kernel 5.10).
-   - `t2.micro` instance type.
-   - Attaches a security group allowing inbound HTTP traffic on port 80.
+The configuration uses the default VPC and retrieves subnets associated with a specified VPC ID (`vpc-0cc7e1e8d0e236d78`).
 
-4. **Task Definition**
-   - Family name: `nginxdemos-hello`.
-   - Supports both Fargate and EC2 launch types.
-   - Container: `nginxdemos/hello`.
-   - CPU: 0.5 vCPU allocated, with a limit of 1 vCPU.
-   - Memory: 3GB allocated, with a limit of 3GB.
+### IAM Roles and Policies
 
-5. **ECS Service**
-   - Launch type: Fargate.
-   - Platform version: `LATEST`.
-   - Deployment configuration: Replica with 1 desired task.
-   - Connects to the ALB with a target group.
+- **Cluster Role:** `eksClusterRole` with policies `AmazonEKSClusterPolicy` and `AmazonEKSVPCResourceController`.
+- **Node Group Role:** `EKSNodeGroupRole` with policies `AmazonEC2ContainerRegistryReadOnly`, `AmazonEKS_CNI_Policy`, and `AmazonEKSWorkerNodePolicy`.
 
-6. **Application Load Balancer (ALB)**
-   - Name: `albForECS`.
-   - Listens on port 80 with HTTP protocol.
-   - Forward requests to the ECS service.
-   - Health checks on path `/` with a delay of 300 seconds.
+### EKS Cluster
 
-## How It Works
+- **Name:** `terraformEKS`
+- **Version:** 1.30
+- **Endpoint Access:** Public
+- **Add-ons:**
+  - **CoreDNS:** `v1.11.1-eksbuild.8`
+  - **kube-proxy:** `v1.30.0-eksbuild.3`
 
-- **ECS Cluster**: Serves as the logical grouping for the services and tasks.
-- **Auto Scaling Group**: Ensures there are up to 3 EC2 instances available for running tasks if required. It uses a Launch Configuration to define instance settings.
-- **Task Definition**: Defines how tasks should run, including CPU and memory limits, and the container image to use.
-- **ECS Service**: Manages the desired number of running tasks based on the task definition.
-- **Application Load Balancer**: Routes incoming HTTP traffic to the ECS service and performs health checks to ensure traffic is only routed to healthy instances.
+### Node Group
+
+- **Name:** `terraformEKSNodeGroup`
+- **Instance Type:** `t2.micro`
+- **AMI Type:** `AL2_x86_64`
+- **Disk Size:** 10GB
+- **Scaling Configuration:** Desired size 2, minimum size 2, maximum size 2
+- **Update Configuration:** Maximum unavailable node set to 1
 
 ## Usage
 
-1. **Initialize Terraform**
+1. **Clone the Repository**
+
+   Clone the repository containing this Terraform configuration to your local machine.
+
+   ```bash
+   git clone https://github.com/yourusername/your-repository.git
+   cd your-repository
+
+2. **Initialize Terraform**
 
    Navigate to the directory containing your Terraform configuration and run:
 

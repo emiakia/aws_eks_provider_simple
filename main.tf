@@ -1,228 +1,135 @@
 provider "aws" {
-  region = "eu-central-1" 
+  region = "eu-central-1" # Replace with your desired region
 }
 
-# VPC Data
-data "aws_vpc" "default" {
-  default = true
+# Data source to get specific VPC
+data "aws_vpc" "specified_vpc" {
+  id = "vpc-0cc7e1e8d0e236d78"
 }
 
-data "aws_subnets" "default" {
+# Data source to get VPC subnets
+data "aws_subnets" "subnets" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+    values = [data.aws_vpc.specified_vpc.id]
   }
 }
 
-# Security Group
-resource "aws_security_group" "ecs_sg" {
-  name        = "ecs_sg"
-  description = "Allow inbound access on port 80"
-  vpc_id      = data.aws_vpc.default.id
+# IAM Role for EKS Cluster
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "eksClusterRole"
+  description = "Amazon EKS - Cluster role"
 
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
 }
 
-# ECS Cluster
-resource "aws_ecs_cluster" "MyECSCluster" {
-  name = "MyECSCluster"  # Replace with variable if needed
+# Attach policies to the EKS Cluster Role
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role     = aws_iam_role.eks_cluster_role.name
 }
 
-# Data Source for Amazon Linux 2 AMI
-data "aws_ami" "amazon_linux2" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  filter {
-    name   = "architecture"
-    values = ["x86_64"]
-  }
+resource "aws_iam_role_policy_attachment" "eks_vpc_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+  role     = aws_iam_role.eks_cluster_role.name
 }
 
-# Launch Configuration for Auto Scaling Group
-resource "aws_launch_configuration" "ecs_launch_config" {
-  name          = "ecs-launch-config"
-  image_id      = data.aws_ami.amazon_linux2.id
-  instance_type = "t2.micro"  # Replace with variable if needed
-  security_groups = [
-    aws_security_group.ecs_sg.id
+# IAM Role for Node Group
+resource "aws_iam_role" "eks_node_group_role" {
+  name = "EKSNodeGroupRole"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Attach policies to the EKS Node Group Role
+resource "aws_iam_role_policy_attachment" "node_group_policies" {
+  for_each = toset([
+    "AmazonEC2ContainerRegistryReadOnly",
+    "AmazonEKS_CNI_Policy",
+    "AmazonEKSWorkerNodePolicy"
+  ])
+  
+  policy_arn = "arn:aws:iam::aws:policy/${each.value}"
+  role     = aws_iam_role.eks_node_group_role.name
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "terraform_eks" {
+  name     = "terraformEKS"
+  role_arn  = aws_iam_role.eks_cluster_role.arn
+  version   = "1.30"
+  
+  vpc_config {
+    subnet_ids = data.aws_subnets.subnets.ids
+    security_group_ids = [aws_security_group.default.id]
+    endpoint_public_access = true
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy,
+    aws_iam_role_policy_attachment.eks_vpc_policy
   ]
+}
 
-  lifecycle {
-    create_before_destroy = true
+# Node Group
+resource "aws_eks_node_group" "terraform_eks_node_group" {
+  cluster_name    = aws_eks_cluster.terraform_eks.name
+  node_group_name = "terraformEKSNodeGroup"
+  node_role_arn   = aws_iam_role.eks_node_group_role.arn
+  subnet_ids      = data.aws_subnets.subnets.ids
+  scaling_config {
+    desired_size = 2
+    min_size     = 2
+    max_size     = 2
+  }
+  instance_types = ["t2.micro"]
+  disk_size      = 10
+  ami_type       = "AL2_x86_64"
+
+  update_config {
+    max_unavailable = 1
   }
 
-  user_data = <<-EOF
-              #!/bin/bash
-              echo ECS_CLUSTER=${aws_ecs_cluster.MyECSCluster.name} >> /etc/ecs/ecs.config
-              EOF
-
-  iam_instance_profile = aws_iam_instance_profile.ecs_instance_role.name
+  depends_on = [
+    aws_iam_role_policy_attachment.node_group_policies
+  ]
 }
 
-# Auto Scaling Group
-resource "aws_autoscaling_group" "ecs_asg" {
-  desired_capacity     = 0
-  max_size             = 3
-  min_size             = 0
-  launch_configuration = aws_launch_configuration.ecs_launch_config.id
-  vpc_zone_identifier  = data.aws_subnets.default.ids
-
-  tag {
-    key                 = "Name"
-    value               = "ecs-instance"
-    propagate_at_launch = true
-  }
+# Security Group for EKS Nodes (default security group)
+resource "aws_security_group" "default" {
+  vpc_id = data.aws_vpc.specified_vpc.id
 }
 
-# ECS Task Definition
-resource "aws_ecs_task_definition" "nginxdemos_hello" {
-  family                   = "nginxdemos-hello"
-  cpu                      = "512"
-  memory                   = "3072"
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE", "EC2"]
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-  task_role_arn            = aws_iam_role.ecs_task_execution_role.arn
-  container_definitions    = jsonencode([{
-    name  = "nginxdemos-hello"
-    image = "nginxdemos/hello"
-    cpu   = 512
-    memory = 3072
-    essential = true
-    portMappings = [{
-      containerPort = 80
-      hostPort      = 80
-      protocol      = "tcp"
-    }]
-  }])
+# EKS Add-ons
+resource "aws_eks_addon" "coredns" {
+  cluster_name = aws_eks_cluster.terraform_eks.name
+  addon_name   = "coredns"
+  addon_version = "v1.11.1-eksbuild.8"
 }
 
-# ECS Service
-resource "aws_ecs_service" "nginxdemos_hello_service" {
-  name            = "nginxdemos-hello"
-  cluster         = aws_ecs_cluster.MyECSCluster.id
-  task_definition = aws_ecs_task_definition.nginxdemos_hello.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  platform_version = "LATEST"
-  network_configuration {
-    subnets         = data.aws_subnets.default.ids
-    security_groups = [aws_security_group.ecs_sg.id]
-    assign_public_ip = true
-  }
-  load_balancer {
-    target_group_arn = aws_lb_target_group.tg_nginxdemos_hello.arn
-    container_name   = "nginxdemos-hello"
-    container_port   = 80
-  }
-  deployment_minimum_healthy_percent = 50
-  deployment_maximum_percent         = 200
-
-  depends_on = [aws_lb_listener.alb_listener]
-}
-
-# Application Load Balancer
-resource "aws_lb" "alb" {
-  name               = "albForECS"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.ecs_sg.id]
-  subnets            = data.aws_subnets.default.ids
-}
-
-# Load Balancer Listener
-resource "aws_lb_listener" "alb_listener" {
-  load_balancer_arn = aws_lb.alb.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.tg_nginxdemos_hello.arn
-  }
-}
-
-# Load Balancer Target Group
-resource "aws_lb_target_group" "tg_nginxdemos_hello" {
-  name     = "tg-nginxdemos-hello"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = data.aws_vpc.default.id
-
-  target_type = "ip"  # Change target type to 'ip'
-
-  health_check {
-    protocol = "HTTP"
-    path     = "/"
-    interval = 300
-  }
-}
-
-# IAM Roles for ECS
-resource "aws_iam_role" "ecs_task_execution_role" {
-  name = "ecs_task_execution_role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = {
-        Service = "ecs-tasks.amazonaws.com"
-      }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-  role       = aws_iam_role.ecs_task_execution_role.name
-}
-
-resource "aws_iam_instance_profile" "ecs_instance_role" {
-  name = "ecs-instance-role"
-  role = aws_iam_role.ecs_instance_role.name
-}
-
-resource "aws_iam_role" "ecs_instance_role" {
-  name = "ecs-instance-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_instance_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
-  role       = aws_iam_role.ecs_instance_role.name
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name = aws_eks_cluster.terraform_eks.name
+  addon_name   = "kube-proxy"
+  addon_version = "v1.30.0-eksbuild.3"
 }
